@@ -22,12 +22,14 @@ import edu.wpi.first.wpilibj.Encoder;
 import edu.wpi.first.wpilibj.Joystick;
 import edu.wpi.first.wpilibj.SerialPort;
 import edu.wpi.first.wpilibj.Timer;
+import edu.wpi.first.wpilibj.controller.RamseteController;
 import edu.wpi.first.wpilibj.controller.SimpleMotorFeedforward;
 import edu.wpi.first.wpilibj.drive.DifferentialDrive;
 import edu.wpi.first.wpilibj.geometry.Pose2d;
 import edu.wpi.first.wpilibj.geometry.Rotation2d;
 import edu.wpi.first.wpilibj.geometry.Translation2d;
 import edu.wpi.first.wpilibj.interfaces.Gyro;
+import edu.wpi.first.wpilibj.kinematics.ChassisSpeeds;
 import edu.wpi.first.wpilibj.kinematics.DifferentialDriveKinematics;
 import edu.wpi.first.wpilibj.kinematics.DifferentialDriveOdometry;
 import edu.wpi.first.wpilibj.kinematics.DifferentialDriveWheelSpeeds;
@@ -38,6 +40,7 @@ import edu.wpi.first.wpilibj.trajectory.Trajectory;
 import edu.wpi.first.wpilibj.trajectory.TrajectoryConfig;
 import edu.wpi.first.wpilibj.trajectory.TrajectoryGenerator;
 import edu.wpi.first.wpilibj.trajectory.TrajectoryUtil;
+import edu.wpi.first.wpilibj.trajectory.Trajectory.State;
 import edu.wpi.first.wpilibj.trajectory.constraint.DifferentialDriveVoltageConstraint;
 import edu.wpi.first.wpilibj.trajectory.constraint.TrajectoryConstraint;
 import edu.wpi.first.wpilibj2.command.RamseteCommand;
@@ -46,36 +49,33 @@ import frc.ecommons.RobotMap;
 import com.kauailabs.navx.*;
 import com.kauailabs.navx.frc.AHRS;
 
-
-
-
 // import edu.wpi.first.wpilibj.shuffleboard.BuiltInTypes;
 
 // import edu.wpi.first.wpilibj.shuffleboard;
- 
-public class DriveTrain  {
-  
+
+public class DriveTrain {
+
   // Joysticks/Controllers
   Joystick m_joy;
-  
-  //Talons
+
+  // Talons
   WPI_TalonSRX m_rMaster;
   WPI_TalonSRX m_lMaster;
 
-  //Encoders
+  // Encoders
   Encoder m_leftEncoder;
   Encoder m_rightEncoder;
-  
-  //Victors
+
+  // Victors
   WPI_VictorSPX m_rSlave1;
   WPI_VictorSPX m_lSlave1;
 
-  //NavX Board
+  // NavX Board
   AHRS navX;
 
-  //Solenoids
+  // Solenoids
 
-  //Loops
+  // Loops
   boolean dgLoop = false;
   boolean driveTestLoop = false;
   public static boolean camSwitch = false;
@@ -84,20 +84,21 @@ public class DriveTrain  {
   double driveSpeed = 0.5;
 
   DifferentialDrive m_drive;
-  DifferentialDriveKinematics kDriveKinematics;  // Odometry class for tracking robot pose
+  DifferentialDriveKinematics kDriveKinematics; // Odometry class for tracking robot pose
   DifferentialDriveOdometry m_odometry;
   // Create config for trajectory
   TrajectoryConfig config;
 
   // Create a voltage constraint to ensure we don't accelerate too fast
-  
 
-  //m_rMaster.getSelectedSensorPosition()
-  //m_lMaster.getSelectedSensorPosition()
-  //two test trajectories
+  // m_rMaster.getSelectedSensorPosition()
+  // m_lMaster.getSelectedSensorPosition()
+  // two test trajectories
   Trajectory exampleTrajectory;
-  Trajectory trajectory;  
-  RamseteCommand ramseteCommand;  
+  Trajectory trajectory;
+  RamseteController ramseteController;
+  Trajectory.State goal;
+  ChassisSpeeds adjustedSpeeds;
 
   Timer run;
   ShuffleboardTab testMode = Shuffleboard.getTab("Test Mode");
@@ -236,65 +237,13 @@ public class DriveTrain  {
 
     kDriveKinematics = new DifferentialDriveKinematics(Constants.kTrackWidthMeters);
     m_drive = new DifferentialDrive(m_lMaster, m_rMaster); //who knows if this is gonna work, not me looool
-    
-    try {
-      trajectory = TrajectoryUtil.fromPathweaverJson(Paths.get("/home/lvuser/deploy/YourPath.wpilib.json"));
-    } catch (IOException e) {
-      System.out.print("Some implicit garbo and explicit stufff... " + e);
-    }
-    
-
-    // Create a voltage constraint to ensure we don't accelerate too fast
-    var autoVoltageConstraint =
-    new DifferentialDriveVoltageConstraint(
-    new SimpleMotorFeedforward(Constants.ksVolts, Constants.kvVoltSecondsPerMeter, Constants.kaVoltSecondsSquaredPerMeter), kDriveKinematics,10);
-    //NavX Board
-    navX = new AHRS(SerialPort.Port.kMXP); //may need port
-
-    //making the test trajectory
-    exampleTrajectory = TrajectoryGenerator.generateTrajectory(
-        // Start at the origin facing the +X direction
-        new Pose2d(0, 0, new Rotation2d(0)),
-        // Pass through these two interior waypoints, making an 's' curve path
-        List.of(
-            new Translation2d(1, 1),
-            new Translation2d(2, -1)
-        ),
-        // End 3 meters straight ahead of where we started, facing forward
-        new Pose2d(3, 0, new Rotation2d(0)),
-        // Pass config
-        config
-    );
-
-    // Create config for trajectory
-    config =
-        new TrajectoryConfig(Constants.kMaxSpeedMetersPerSecond,
-                             Constants.kMaxAccelerationMetersPerSecondSquared)
-            // Add kinematics to ensure max speed is actually obeyed
-            .setKinematics(kDriveKinematics)
-            // Apply the voltage constraint
-            .addConstraint(autoVoltageConstraint);
-
-    ramseteCommand = new RamseteCommand(
-        exampleTrajectory,
-        m_robotDrive::getPose,
-        new RamseteController(AutoConstants.kRamseteB, AutoConstants.kRamseteZeta),
-        new SimpleMotorFeedforward(DriveConstants.ksVolts,
-                                   DriveConstants.kvVoltSecondsPerMeter,
-                                   DriveConstants.kaVoltSecondsSquaredPerMeter),
-        DriveConstants.kDriveKinematics,
-        m_robotDrive::getWheelSpeeds,
-        new PIDController(DriveConstants.kPDriveVel, 0, 0),
-        new PIDController(DriveConstants.kPDriveVel, 0, 0),
-        // RamseteCommand passes volts to the callback
-        m_robotDrive::tankDriveVolts,
-        m_robotDrive
-    );
+    ramseteController = new RamseteController();
+    goal = trajectory.sample(3.4);
 
     TalonConfig();
 
 
- 
+    
   }
 
   public void autonomousInit() {
@@ -336,8 +285,8 @@ public class DriveTrain  {
     
     
     m_odometry.update(Rotation2d.fromDegrees(getHeading()), getDistance(m_lMaster), getDistance(m_rMaster));                                            //FIX??
-    
-
+    ramseteController.calculate(getPose(), goal);
+    adjustedSpeeds = ramseteController.calculate(getPose(), goal);
   }
 
    public DifferentialDriveWheelSpeeds getWheelSpeeds() {
